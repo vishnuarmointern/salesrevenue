@@ -127,7 +127,7 @@ details.map table{border-collapse:collapse;margin-top:8px;width:100%}
 details.map td{padding:3px 12px 3px 0;vertical-align:top;border-bottom:1px solid var(--line)}
 details.map code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
 
-/* ---------- detail table ---------- */
+/* ---------- detail table styles ---------- */
 .tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 14px}
 .search{flex:1 1 220px;max-width:340px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:13px}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -137,6 +137,9 @@ table.dt{width:100%;border-collapse:collapse;font-size:13px}
 .dt .r{text-align:right;white-space:nowrap}
 .dt tr.m>td{font-weight:500}
 .dt td:first-child{white-space:nowrap}
+.dt td.nest,.dt td.desc{white-space:normal}
+.dt td.desc{min-width:170px}
+.dt td.mu{color:var(--muted);white-space:nowrap}
 .dt tr.click{cursor:pointer}
 .dt tr.click:hover>td{background:var(--hover)}
 .dt tfoot td{font-weight:600;border-top:2px solid var(--ink);border-bottom:0}
@@ -146,9 +149,14 @@ table.dt{width:100%;border-collapse:collapse;font-size:13px}
 .exp{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
 .exp:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .chev{display:inline-block;width:8px;color:var(--muted);transition:transform .12s}
-.open>td .chev{transform:rotate(90deg)}
+tr.open>td>.exp>.chev{transform:rotate(90deg)}
 .desc{color:var(--ink2)}
 .empty{padding:28px 0;text-align:center;color:var(--muted)}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--accent-soft);color:var(--ink2);white-space:nowrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--bg);flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px;font-weight:500;color:var(--ink2)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.tools .toggle{margin-left:auto}
 
 .tip{position:fixed;z-index:20;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;line-height:1.45;padding:8px 10px;border-radius:8px;max-width:280px;box-shadow:0 6px 20px rgba(0,0,0,.18)}
 .tip b{font-weight:600}
@@ -167,6 +175,7 @@ footer{margin-top:26px;font-size:12px;color:var(--muted)}
   .tile{padding:14px 14px}
   .take{font-size:18px}
   .actions .btn{padding:7px 10px}
+  .tools .toggle{margin-left:0}
 }
 
 @media print{
@@ -202,7 +211,6 @@ footer{margin-top:26px;font-size:12px;color:var(--muted)}
   .dt td,.dt th{padding:4px 8px}
   .dt tr.sub{display:none}
   .chev{display:none}
-  .detail{break-before:auto}
   tr{break-inside:avoid}
 }
 </style>
@@ -286,19 +294,23 @@ footer{margin-top:26px;font-size:12px;color:var(--muted)}
     </section>
 
     <section class="card detail">
-      <div class="eyebrow">By part number</div>
-      <h2 class="take" id="takeTable">Month, then part number, then order</h2>
+      <div class="cardhead">
+        <div class="eyebrow" id="detailEyebrow">By part number</div>
+        <div class="seg noprint" id="modeSeg" role="group" aria-label="Group the detail table by">
+          <button type="button" data-mode="part" aria-pressed="true">By Part Number</button>
+          <button type="button" data-mode="invoice" aria-pressed="false">By Invoice Number</button>
+        </div>
+      </div>
+      <h2 class="take" id="takeTable"></h2>
       <div class="tools">
-        <input class="search" id="search" type="search" placeholder="Search part number or description" aria-label="Search part number or description">
-        <select id="sort" aria-label="Sort parts">
-          <option value="rev">Most revenue</option>
-          <option value="units">Most units</option>
-          <option value="orders">Most orders</option>
-          <option value="az">Part Number A–Z</option>
-        </select>
+        <input class="search" id="search" type="search" placeholder="Search part, description, invoice or customer" aria-label="Search the detail table">
+        <select id="sort" aria-label="Sort"></select>
+        <button type="button" class="btn" id="expandAll">Expand all months</button>
+        <button type="button" class="btn" id="collapseAll">Collapse all</button>
+        <label class="toggle"><input type="checkbox" id="hideNames2" checked> Hide customer names</label>
       </div>
       <div class="scroll" id="table"></div>
-      <p class="note">Click a month to see its parts, then a part to see the orders that bought it. Orders are counted by invoice number.</p>
+      <p class="note" id="tableNote"></p>
     </section>
 
     <footer id="foot"></footer>
@@ -373,14 +385,19 @@ function prepare(payload) {
   var parts = payload.parts.map(function (p) {
     return { pn: p[0], desc: p[1] || '', fam: familyOf(p[0]) };
   });
-  var rows = [], minN = Infinity, maxN = 0, famAll = {};
+  var customers = (payload.customers || []).map(function (c) {
+    return Array.isArray(c) ? { name: String(c[0]), no: String(c[1] || '') } : { name: String(c), no: '' };
+  });
+  var rows = [], minN = Infinity, maxN = 0, famAll = {}, custAll = {};
   for (var i = 0; i < payload.rows.length; i++) {
     var r = payload.rows[i], s = String(r[1]);
     var n = dnum(+s.slice(0, 4), +s.slice(5, 7), +s.slice(8, 10));
     if (!(n > 0)) continue;
     var cents = Math.round(Number(r[7]) * 100);
     rows.push({ o: String(r[0]), n: n, ym: Math.floor(n / 100), p: r[2], c: r[3],
-                q: Number(r[4]) || 0, u: Number(r[5]) || 0, disc: Number(r[6]) || 0, a: cents });
+                q: Number(r[4]) || 0, u: Number(r[5]) || 0, disc: Number(r[6]) || 0, a: cents,
+                cur: String(r[8] || 'CAD'), rate: Number(r[9]) || 1 });
+    custAll[r[3]] = (custAll[r[3]] || 0) + cents;
     if (n < minN) minN = n;
     if (n > maxN) maxN = n;
     var f = parts[r[2]].fam;
@@ -391,7 +408,12 @@ function prepare(payload) {
     .sort(function (a, b) { return famAll[b] - famAll[a] || (a < b ? -1 : 1); });
   var famSlot = {};
   ranked.forEach(function (f, i) { if (i < 8) famSlot[f] = i + 1; });
-  return { parts: parts, customers: payload.customers, rows: rows,
+  /* When names are hidden, each customer gets a fixed code by all-time revenue
+     (Customer 1 = largest), so the same customer has the same code everywhere. */
+  customers.forEach(function (c, i) { c.cents = custAll[i] || 0; c.i = i; });
+  customers.slice().sort(function (a, b) { return b.cents - a.cents || a.i - b.i; })
+    .forEach(function (c, k) { c.code = k + 1; });
+  return { parts: parts, customers: customers, rows: rows,
            minN: rows.length ? minN : 0, maxN: maxN, famSlot: famSlot,
            labels: payload.labels || {} };
 }
@@ -488,36 +510,74 @@ function compute(model, fromN, toN) {
   };
 }
 
-/* Detail table: Month -> Part Number -> Order Number. */
-function buildTree(rows, model, search, sort) {
-  var q = String(search || '').trim().toLowerCase();
-  var months = {}, allParts = {}, allOrders = {}, tot = { parts: 0, units: 0, orders: 0, cents: 0 };
+function custLabel(model, ci, showNames) {
+  var c = model.customers[ci];
+  if (!c) return '';
+  return showNames ? c.name : 'Customer ' + c.code;
+}
+function curLabel(x) {
+  if (!x.cur || x.cur === 'CAD') return 'CAD';
+  return x.cur + ' @ ' + String(Number(x.rate.toFixed(4)));
+}
+function numCmp(a, b) {
+  var x = parseFloat(a), y = parseFloat(b);
+  if (isFinite(x) && isFinite(y) && x !== y) return x - y;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* Detail table. mode 'part':    Month -> Part Number -> invoice lines
+                 mode 'invoice': Month -> Invoice Number -> part lines */
+function buildDetail(rows, model, o) {
+  o = o || {};
+  var byInv = o.mode === 'invoice', show = !!o.showNames;
+  var q = String(o.search || '').trim().toLowerCase();
+  var months = {}, all = { p: {}, i: {}, c: {} };
+  var tot = { parts: 0, invoices: 0, customers: 0, units: 0, cents: 0, lines: 0 };
+  function mark(set, k, holder, field) { if (!set[k]) { set[k] = 1; holder[field]++; } }
   for (var i = 0; i < rows.length; i++) {
-    var r = rows[i], p = model.parts[r.p];
-    if (q && p.pn.toLowerCase().indexOf(q) < 0 && p.desc.toLowerCase().indexOf(q) < 0) continue;
-    var M = months[r.ym] || (months[r.ym] = { ym: r.ym, parts: {}, orders: {}, nOrders: 0, units: 0, cents: 0 });
-    var P = M.parts[r.p] || (M.parts[r.p] = { p: r.p, pn: p.pn, desc: p.desc, orders: {}, nOrders: 0, units: 0, cents: 0, lines: [] });
-    P.lines.push(r); P.units += r.q; P.cents += r.a;
-    if (!P.orders[r.o]) { P.orders[r.o] = 1; P.nOrders++; }
+    var r = rows[i], p = model.parts[r.p], cu = model.customers[r.c] || { no: '' };
+    if (q) {
+      /* Hidden names are not searchable, so a search can't reveal who a customer is. */
+      var hay = [p.pn, p.desc, r.o, custLabel(model, r.c, show), show ? cu.no : ''].join('\n').toLowerCase();
+      if (hay.indexOf(q) < 0) continue;
+    }
+    var M = months[r.ym] || (months[r.ym] = { ym: r.ym, groups: {}, p: {}, i: {}, c: {}, nP: 0, nI: 0, nC: 0, units: 0, cents: 0 });
+    var key = byInv ? r.o : String(r.p), G = M.groups[key];
+    if (!G) {
+      G = M.groups[key] = byInv
+        ? { key: key, o: r.o, n: r.n, c: r.c, cur: r.cur, rate: r.rate, lines: [], p: {}, nP: 0, units: 0, cents: 0 }
+        : { key: key, p: r.p, pn: p.pn, desc: p.desc, fam: p.fam, lines: [], i: {}, nI: 0, c: {}, nC: 0, units: 0, cents: 0 };
+    }
+    G.lines.push(r); G.units += r.q; G.cents += r.a;
+    if (byInv) { mark(G.p, r.p, G, 'nP'); if (r.n < G.n) G.n = r.n; }
+    else { mark(G.i, r.o, G, 'nI'); mark(G.c, r.c, G, 'nC'); }
     M.units += r.q; M.cents += r.a;
-    if (!M.orders[r.o]) { M.orders[r.o] = 1; M.nOrders++; }
-    tot.units += r.q; tot.cents += r.a;
-    if (!allParts[r.p]) { allParts[r.p] = 1; tot.parts++; }
-    if (!allOrders[r.o]) { allOrders[r.o] = 1; tot.orders++; }
+    mark(M.p, r.p, M, 'nP'); mark(M.i, r.o, M, 'nI'); mark(M.c, r.c, M, 'nC');
+    tot.units += r.q; tot.cents += r.a; tot.lines++;
+    mark(all.p, r.p, tot, 'parts'); mark(all.i, r.o, tot, 'invoices'); mark(all.c, r.c, tot, 'customers');
   }
-  var cmp = {
+  var cmp = byInv ? {
+    rev: function (a, b) { return b.cents - a.cents || b.n - a.n; },
+    date: function (a, b) { return b.n - a.n || numCmp(b.o, a.o); },
+    num: function (a, b) { return numCmp(a.o, b.o); },
+    cust: function (a, b) {
+      var x = custLabel(model, a.c, show), y = custLabel(model, b.c, show);
+      return numCmp(x.toLowerCase(), y.toLowerCase()) || b.n - a.n;
+    }
+  }[o.sort] : {
     rev: function (a, b) { return b.cents - a.cents || (a.pn < b.pn ? -1 : 1); },
     units: function (a, b) { return b.units - a.units || b.cents - a.cents; },
-    orders: function (a, b) { return b.nOrders - a.nOrders || b.cents - a.cents; },
+    orders: function (a, b) { return b.nI - a.nI || b.cents - a.cents; },
     az: function (a, b) { return a.pn < b.pn ? -1 : a.pn > b.pn ? 1 : 0; }
-  }[sort] || null;
+  }[o.sort];
+  var lineCmp = byInv
+    ? function (a, b) { return b.a - a.a || (model.parts[a.p].pn < model.parts[b.p].pn ? -1 : 1); }
+    : function (a, b) { return a.n - b.n || numCmp(a.o, b.o); };
   var list = Object.keys(months).map(function (k) {
     var M = months[k];
-    M.list = Object.keys(M.parts).map(function (pk) { return M.parts[pk]; });
+    M.list = Object.keys(M.groups).map(function (g) { return M.groups[g]; });
     if (cmp) M.list.sort(cmp);
-    M.list.forEach(function (P) {
-      P.lines.sort(function (a, b) { return a.n - b.n || (a.o < b.o ? -1 : 1); });
-    });
+    M.list.forEach(function (G) { G.lines.sort(lineCmp); });
     return M;
   }).sort(function (a, b) { return b.ym - a.ym; });
   return { months: list, total: tot };
@@ -529,16 +589,17 @@ function csvCell(v) {
 }
 function buildCsv(rows, model, withCustomer) {
   var L = model.labels;
-  var head = [L.order || 'Order Number', L.date || 'Order Date', L.part || 'Part Number',
+  var head = [L.order || 'Invoice Number', L.date || 'Invoice Date', L.part || 'Part Number',
               L.desc || 'Description', 'Product Family'];
-  if (withCustomer) head.push(L.customer || 'Customer');
-  head.push(L.qty || 'Quantity', L.unit || 'Unit Price (CAD)', L.disc || 'Discount (%)', L.amount || 'Sales Price (CAD)');
+  if (withCustomer) head.push(L.customer || 'Customer', L.custNo || 'Customer Number');
+  head.push(L.qty || 'Quantity', L.unit || 'Unit Price (CAD)', L.disc || 'Discount (%)',
+            L.amount || 'Sales Price (CAD)', 'Currency', 'Exchange Rate');
   var out = [head.map(csvCell).join(',')];
   rows.slice().sort(function (a, b) { return a.n - b.n || (a.o < b.o ? -1 : 1); }).forEach(function (r) {
-    var p = model.parts[r.p], d = dparts(r.n);
+    var p = model.parts[r.p], d = dparts(r.n), c = model.customers[r.c] || { name: '', no: '' };
     var line = [r.o, d.y + '-' + ('0' + d.m).slice(-2) + '-' + ('0' + d.d).slice(-2), p.pn, p.desc, p.fam];
-    if (withCustomer) line.push(model.customers[r.c]);
-    line.push(r.q, r.u.toFixed(2), r.disc, (r.a / 100).toFixed(2));
+    if (withCustomer) line.push(c.name, c.no);
+    line.push(r.q, r.u.toFixed(2), r.disc, (r.a / 100).toFixed(2), r.cur || 'CAD', r.rate || 1);
     out.push(line.map(csvCell).join(','));
   });
   return out.join('\r\n');
@@ -582,7 +643,7 @@ var store = {
   del: function (k) { try { sessionStorage.removeItem(k); } catch (e) {} }
 };
 var S = { token: store.get('armo_token'), model: null, from: 0, to: 0, R: null,
-          openM: {}, openP: {}, printing: false, generated: '' };
+          openM: {}, openP: {}, printing: false, generated: '', mode: 'part' };
 
 function api(body) {
   return fetch(API_URL, {
@@ -738,11 +799,11 @@ function render() {
   renderTiles(); renderCharts(); renderTable();
   var R = S.R;
   $('printhead').textContent = 'Period: ' + fmtDate(R.from) + ' to ' + fmtDate(R.to) + ' · All amounts in CAD';
-  $('foot').textContent = 'Source: ' + 'Sales Revenue sheet, invoice detail' +
+  $('foot').textContent = 'Source: Sales Revenue sheet, invoice detail' +
     (S.generated ? ' · Data read ' + S.generated.replace('T', ' ') : '') +
     ' · ' + S.model.rows.length.toLocaleString('en-CA') + ' invoice lines loaded';
   /* The charts and the table are built from the same rows; this guards it. */
-  var t = buildTree(R.rows, S.model, '', 'rev').total.cents, m = 0, f = 0;
+  var t = buildDetail(R.rows, S.model, { mode: 'part' }).total.cents, m = 0, f = 0;
   R.months.forEach(function (x) { m += x.cur; });
   R.slices.forEach(function (x) { f += x.cents; });
   if (t !== R.total || m !== R.total || f !== R.total) console.error('Totals do not reconcile', t, m, f, R.total);
@@ -950,7 +1011,7 @@ function drawTop() {
 
 /* Customer concentration: one bar, top 5 customers vs everyone else */
 function custName(i, x) {
-  return $('hideNames').checked ? 'Customer ' + 'ABCDE'.charAt(i) : S.model.customers[+x.key];
+  return custLabel(S.model, +x.key, !$('hideNames').checked);
 }
 function drawCust() {
   var R = S.R, el = $('chartCust'), top = R.top5;
@@ -984,43 +1045,119 @@ function drawCust() {
   }).join('') + '<tr><td><b>Top ' + top.length + ' together</b></td><td class="r"><b>' + money(R.top5Cents) +
     '</b></td><td class="r p"><b>' + pct(share) + '</b></td></tr>';
 }
-$('hideNames').addEventListener('change', drawCust);
+function setHidden(v) {
+  $('hideNames').checked = v; $('hideNames2').checked = v;
+  drawCust(); renderTable();
+}
+$('hideNames').addEventListener('change', function () { setHidden(this.checked); });
+$('hideNames2').addEventListener('change', function () { setHidden(this.checked); });
 
 /* ---------- detail table ---------- */
+var SORTS = {
+  part: [['rev', 'Most revenue'], ['units', 'Most units'], ['orders', 'Most invoices'], ['az', 'Part Number A–Z']],
+  invoice: [['rev', 'Largest invoice'], ['date', 'Newest first'], ['num', 'Invoice Number'], ['cust', 'Customer A–Z']]
+};
+function setMode(mode, quiet) {
+  S.mode = mode; S.openP = {};
+  Array.prototype.forEach.call($('modeSeg').children, function (b) {
+    b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
+  });
+  fillSelect($('sort'), SORTS[mode], 'rev');
+  var part = mode === 'part';
+  $('detailEyebrow').textContent = part ? 'By part number' : 'By invoice number';
+  $('takeTable').textContent = part ? 'Month, then part number, then the invoices that bought it'
+                                    : 'Month, then invoice, then the parts on it';
+  $('tableNote').textContent = (part
+    ? 'Click a month to see its parts, then a part to see every invoice that bought it.'
+    : 'Click a month to see its invoices, then an invoice to see each part on it.') +
+    ' Unit prices and amounts are in CAD; Currency shows what the invoice was billed in.';
+  if (!quiet) renderTable();
+}
+$('modeSeg').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-mode]');
+  if (b && b.getAttribute('data-mode') !== S.mode) setMode(b.getAttribute('data-mode'));
+});
+setMode('part', true);
+
+function cell(v, cls) { return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + v + '</td>'; }
+function heads(list) {
+  return '<thead><tr>' + list.map(function (x) {
+    return x.charAt(0) === '>' ? '<th class="r">' + esc(x.slice(1)) + '</th>' : '<th>' + esc(x) + '</th>';
+  }).join('') + '</tr></thead>';
+}
+function expBtn(open, label) {
+  return '<button class="exp" aria-expanded="' + open + '"><span class="chev">›</span>' + label + '</button>';
+}
+function count(n) { return Number(n).toLocaleString('en-CA'); }
+
 function renderTable() {
-  var R = S.R, L = S.model.labels;
-  var T = buildTree(R.rows, S.model, $('search').value, $('sort').value);
+  if (!S.R) return;
+  var model = S.model, L = model.labels, show = !$('hideNames').checked, part = S.mode === 'part';
+  var T = buildDetail(S.R.rows, model, { search: $('search').value, sort: $('sort').value, mode: S.mode, showNames: show });
   var filtered = $('search').value.trim() !== '';
   if (!T.months.length) {
-    $('table').innerHTML = '<div class="empty">' + (filtered ? 'No part numbers match that search in this period.' : 'No sales in this period.') + '</div>';
+    $('table').innerHTML = '<div class="empty">' + (filtered ? 'Nothing matches that search in this period.' : 'No sales in this period.') + '</div>';
     return;
   }
-  var h = '<table class="dt"><thead><tr><th>Month</th><th class="r">Parts</th><th class="r">Units</th><th class="r">Orders</th><th class="r">Revenue</th></tr></thead><tbody>';
+  var lInv = L.order || 'Invoice Number', lDate = L.date || 'Invoice Date';
+  var lCust = L.customer || 'Customer', lNo = L.custNo || 'Customer Number';
+  var custCells = function (ci) {
+    return cell(esc(custLabel(model, ci, show))) + (show ? cell(esc((model.customers[ci] || {}).no || ''), 'mu') : '');
+  };
+  var withCust = function (before, after) { return before.concat(show ? [lCust, lNo] : [lCust], after); };
+
+  var h = '<table class="dt">' + heads(['Month', '>Parts', '>Invoices', '>Customers', '>Units', '>Revenue']) + '<tbody>';
   T.months.forEach(function (M) {
     var open = !!S.openM[M.ym];
-    h += '<tr class="m click' + (open ? ' open' : '') + '" data-m="' + M.ym + '"><td><button class="exp" aria-expanded="' + open + '"><span class="chev">›</span>' +
-      monthLabel(M.ym) + '</button></td><td class="r">' + M.list.length.toLocaleString('en-CA') + '</td><td class="r">' + num(M.units) +
-      '</td><td class="r">' + M.nOrders.toLocaleString('en-CA') + '</td><td class="r">' + money(M.cents) + '</td></tr>';
+    h += '<tr class="m click' + (open ? ' open' : '') + '" data-m="' + M.ym + '">' +
+      cell(expBtn(open, monthLabel(M.ym))) + cell(count(M.nP), 'r') + cell(count(M.nI), 'r') +
+      cell(count(M.nC), 'r') + cell(num(M.units), 'r') + cell(money(M.cents), 'r') + '</tr>';
     if (!open) return;
-    h += '<tr class="sub"><td class="nest" colspan="5"><table class="dt"><thead><tr><th>Part Number</th><th>Description</th><th class="r">Units</th><th class="r">Orders</th><th class="r">Average Unit Price</th><th class="r">Revenue</th></tr></thead><tbody>';
-    M.list.forEach(function (P) {
-      var key = M.ym + '|' + P.p, po = !!S.openP[key];
-      h += '<tr class="click' + (po ? ' open' : '') + '" data-p="' + key + '"><td><button class="exp" aria-expanded="' + po + '"><span class="chev">›</span>' +
-        esc(P.pn) + '</button></td><td class="desc">' + esc(P.desc) + '</td><td class="r">' + num(P.units) + '</td><td class="r">' + P.nOrders +
-        '</td><td class="r">' + (P.units ? money(P.cents / P.units) : '—') + '</td><td class="r">' + money(P.cents) + '</td></tr>';
-      if (!po) return;
-      h += '<tr class="sub"><td class="nest" colspan="6"><table class="dt"><thead><tr><th>' + esc(L.order || 'Order Number') + '</th><th>' +
-        esc(L.date || 'Order Date') + '</th><th class="r">Quantity</th><th class="r">Unit Price</th><th class="r">Discount</th><th class="r">Sales Price</th></tr></thead><tbody>';
-      P.lines.forEach(function (r) {
-        h += '<tr><td>' + esc(r.o) + '</td><td>' + fmtDate(r.n) + '</td><td class="r">' + num(r.q) + '</td><td class="r">' + money(Math.round(r.u * 100)) +
-          '</td><td class="r">' + (r.disc ? num(r.disc) + '%' : '—') + '</td><td class="r">' + money(r.a) + '</td></tr>';
+
+    if (part) {
+      var ph = ['Part Number', 'Description', 'Product Family', '>Units', '>Invoices', '>Customers', '>Average Unit Price', '>Revenue'];
+      var lh = withCust([lInv, lDate], ['>Quantity', '>Unit Price', '>Discount', '>Sales Price', 'Currency']);
+      h += '<tr class="sub"><td class="nest" colspan="6"><table class="dt">' + heads(ph) + '<tbody>';
+      M.list.forEach(function (G) {
+        var key = M.ym + '|' + G.key, po = !!S.openP[key];
+        h += '<tr class="click' + (po ? ' open' : '') + '" data-p="' + esc(key) + '">' +
+          cell(expBtn(po, esc(G.pn))) + cell(esc(G.desc), 'desc') + cell('<span class="tag">' + esc(G.fam) + '</span>') +
+          cell(num(G.units), 'r') + cell(count(G.nI), 'r') + cell(count(G.nC), 'r') +
+          cell(G.units ? money(G.cents / G.units) : '—', 'r') + cell(money(G.cents), 'r') + '</tr>';
+        if (!po) return;
+        h += '<tr class="sub"><td class="nest" colspan="' + ph.length + '"><table class="dt">' + heads(lh) + '<tbody>';
+        G.lines.forEach(function (r) {
+          h += '<tr>' + cell(esc(r.o)) + cell(fmtDate(r.n)) + custCells(r.c) +
+            cell(num(r.q), 'r') + cell(money(Math.round(r.u * 100)), 'r') + cell(r.disc ? num(r.disc) + '%' : '—', 'r') +
+            cell(money(r.a), 'r') + cell(esc(curLabel(r)), 'mu') + '</tr>';
+        });
+        h += '</tbody></table></td></tr>';
       });
-      h += '</tbody></table></td></tr>';
-    });
+    } else {
+      var ih = withCust([lInv, lDate], ['Currency', '>Parts', '>Units', '>Revenue']);
+      var rh = ['Part Number', 'Description', 'Product Family', '>Quantity', '>Unit Price', '>Discount', '>Sales Price'];
+      h += '<tr class="sub"><td class="nest" colspan="6"><table class="dt">' + heads(ih) + '<tbody>';
+      M.list.forEach(function (G) {
+        var key = M.ym + '|' + G.key, po = !!S.openP[key];
+        h += '<tr class="click' + (po ? ' open' : '') + '" data-p="' + esc(key) + '">' +
+          cell(expBtn(po, esc(G.o))) + cell(fmtDate(G.n)) + custCells(G.c) + cell(esc(curLabel(G)), 'mu') +
+          cell(count(G.nP), 'r') + cell(num(G.units), 'r') + cell(money(G.cents), 'r') + '</tr>';
+        if (!po) return;
+        h += '<tr class="sub"><td class="nest" colspan="' + ih.length + '"><table class="dt">' + heads(rh) + '<tbody>';
+        G.lines.forEach(function (r) {
+          var p = model.parts[r.p];
+          h += '<tr>' + cell(esc(p.pn)) + cell(esc(p.desc), 'desc') + cell('<span class="tag">' + esc(p.fam) + '</span>') +
+            cell(num(r.q), 'r') + cell(money(Math.round(r.u * 100)), 'r') + cell(r.disc ? num(r.disc) + '%' : '—', 'r') +
+            cell(money(r.a), 'r') + '</tr>';
+        });
+        h += '</tbody></table></td></tr>';
+      });
+    }
     h += '</tbody></table></td></tr>';
   });
-  h += '</tbody><tfoot><tr><td>Grand total' + (filtered ? ' (search results)' : '') + '</td><td class="r">' + T.total.parts.toLocaleString('en-CA') +
-    '</td><td class="r">' + num(T.total.units) + '</td><td class="r">' + T.total.orders.toLocaleString('en-CA') + '</td><td class="r">' + money(T.total.cents) + '</td></tr></tfoot></table>';
+  h += '</tbody><tfoot><tr>' + cell('Grand total' + (filtered ? ' (search results)' : '')) +
+    cell(count(T.total.parts), 'r') + cell(count(T.total.invoices), 'r') + cell(count(T.total.customers), 'r') +
+    cell(num(T.total.units), 'r') + cell(money(T.total.cents), 'r') + '</tr></tfoot></table>';
   $('table').innerHTML = h;
 }
 $('table').addEventListener('click', function (e) {
@@ -1031,6 +1168,12 @@ $('table').addEventListener('click', function (e) {
   if (p) S.openP[p] = !S.openP[p];
   renderTable();
 });
+$('expandAll').addEventListener('click', function () {
+  if (!S.R) return;
+  S.R.months.forEach(function (x) { S.openM[x.ym] = true; });
+  renderTable();
+});
+$('collapseAll').addEventListener('click', function () { S.openM = {}; S.openP = {}; renderTable(); });
 var searchTimer;
 $('search').addEventListener('input', function () { clearTimeout(searchTimer); searchTimer = setTimeout(renderTable, 120); });
 $('sort').addEventListener('change', renderTable);
